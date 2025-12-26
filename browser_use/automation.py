@@ -27,6 +27,7 @@ from pathlib import Path
 
 from browser_use import Agent
 from browser_use.llm import ChatGoogle
+from browser_use.validators.aiml_validator import validate_choice
 
 
 async def get_user_intent():
@@ -151,6 +152,14 @@ Be thorough, efficient, and user-focused in your approach.
         if result.final_result:
             print("📊 RESULTS:\n")
             print(result.final_result)
+
+            # Validate the agent's choice with a secondary AIML model
+            try:
+                validation = validate_choice(str(result.final_result))
+                print("\n🔎 Validator (second-opinion):\n")
+                print(validation)
+            except Exception:
+                print("\n🔎 Validator: unavailable or encountered an error.")
         else:
             print("No explicit result returned, but task was executed.")
         
