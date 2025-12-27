@@ -11,29 +11,122 @@ Provides:
 
 import asyncio
 
-from browser_use import Agent, BrowserConfig
+from browser_use import Agent, BrowserProfile
 from browser_use.llm import ChatGoogle
 from browser_use.validators.aiml_validator import validate_choice
+import platform
+import shlex
+import subprocess
+
+try:
+    import winreg
+except Exception:
+    winreg = None
+
+
+# Browser executable paths for Windows (Chromium-based browsers only)
+# Note: browser-use uses CDP (Chrome DevTools Protocol), so only Chromium-based browsers work
+BROWSER_EXECUTABLES = {
+    "comet": r"C:\Users\rushd\AppData\Local\Perplexity\Comet\Application\comet.exe",
+    "edge": r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    "chrome": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    "brave": r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+}
+
+
+def get_browser_executable(browser: str) -> str | None:
+    """Get the executable path for a browser name."""
+    return BROWSER_EXECUTABLES.get(browser.lower())
 
 
 def get_browser_choice():
-    """Prompt user to select which browser to use."""
+    """Prompt user to select which browser to use.
+    
+    Note: Only Chromium-based browsers are supported (CDP required).
+    Firefox/LibreWolf are NOT supported by browser-use framework.
+    """
     print("\n=== SELECT BROWSER ===")
-    print("1) Chrome (default)")
-    print("2) Firefox")
-    print("3) Edge")
-    print("4) Safari (macOS only)")
-    
-    choice = input("\nSelect browser (1-4, default 1): ").strip()
-    
+    print("(Only Chromium-based browsers supported)")
+    print("1) Comet (default)")
+    print("2) Edge")
+    print("3) Chrome")
+    print("4) Brave")
+    print("5) Other (use system default)")
+
+    choice = input("\nSelect browser (1-5, default 1): ").strip()
+
     browser_map = {
-        "1": "chrome",
-        "2": "firefox",
-        "3": "edge",
-        "4": "safari",
+        "1": "comet",
+        "2": "edge",
+        "3": "chrome",
+        "4": "brave",
+        "5": "system",
     }
-    
-    return browser_map.get(choice, "chrome")
+
+    return browser_map.get(choice, "comet")
+
+
+def detect_system_default_browser_executable() -> str | None:
+    """Detect the system default browser executable path.
+
+    Returns an executable path or None if detection failed.
+    Supports Windows (registry), macOS and Linux heuristics.
+    """
+    plat = platform.system().lower()
+    try:
+        if plat == "windows" and winreg is not None:
+            # Try HKEY_CLASSES_ROOT\http\shell\open\command
+            try:
+                with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, r"http\shell\open\command") as key:
+                    cmd, _ = winreg.QueryValueEx(key, None)
+                    # command may contain args, extract executable
+                    exe = shlex.split(cmd, posix=False)[0].strip('"')
+                    return exe
+            except Exception:
+                # Fallback: user choice mapping
+                try:
+                    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice") as key:
+                        progid, _ = winreg.QueryValueEx(key, 'ProgId')
+                        with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, progid + r"\shell\open\command") as k2:
+                            cmd, _ = winreg.QueryValueEx(k2, None)
+                            exe = shlex.split(cmd, posix=False)[0].strip('"')
+                            return exe
+                except Exception:
+                    return None
+
+        if plat == "darwin":
+            # macOS: use 'defaults' to get the default handler for http
+            try:
+                out = subprocess.check_output(["/usr/bin/defaults", "read", "com.apple.LaunchServices/com.apple.launchservices.secure", "LSHandlers"], stderr=subprocess.DEVNULL)
+                # parsing LSHandlers is complex; prefer 'open' fallback
+            except Exception:
+                pass
+            return None
+
+        # Linux: try xdg-settings
+        if plat == "linux":
+            try:
+                out = subprocess.check_output(["xdg-settings", "get", "default-web-browser"], stderr=subprocess.DEVNULL, text=True).strip()
+                # returns something like 'com.brave.Browser.desktop'
+                desktop = out
+                # try to resolve .desktop file to Exec
+                try:
+                    desktop_file = f"/usr/share/applications/{desktop}"
+                    with open(desktop_file, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            if line.startswith('Exec='):
+                                parts = line.split('=', 1)[1].strip().split()
+                                exe = parts[0]
+                                return exe
+                except Exception:
+                    return None
+            except Exception:
+                return None
+
+    except Exception:
+        return None
+
+    return None
 
 
 async def get_user_intent():
@@ -64,8 +157,24 @@ Be explicit about actions taken and return a short structured summary.
 """
 
     try:
-        browser_config = BrowserConfig(browser_type=browser)
-        agent = Agent(task=instructions, llm=llm, browser_config=browser_config)
+        if browser == "system":
+            # Attempt to detect the system default browser executable and pass
+            # it explicitly so the agent launches the user's preferred browser
+            exe = detect_system_default_browser_executable()
+            if exe:
+                browser_config = BrowserProfile(executable_path=exe)
+                agent = Agent(task=instructions, llm=llm, browser_profile=browser_config)
+            else:
+                # Last resort: no profile (may fall back to Edge/Chromium)
+                agent = Agent(task=instructions, llm=llm)
+        else:
+            # Use executable path for known browsers
+            exe = get_browser_executable(browser)
+            if exe:
+                browser_config = BrowserProfile(executable_path=exe)
+                agent = Agent(task=instructions, llm=llm, browser_profile=browser_config)
+            else:
+                agent = Agent(task=instructions, llm=llm)
         result = await agent.run(max_steps=20)
 
         print("\n--- RESULT ---\n")
@@ -97,8 +206,21 @@ Describe what you clicked and any visible result.
 """
 
     try:
-        browser_config = BrowserConfig(browser_type=browser)
-        agent = Agent(task=instructions, llm=llm, browser_config=browser_config)
+        if browser == "system":
+            exe = detect_system_default_browser_executable()
+            if exe:
+                browser_config = BrowserProfile(executable_path=exe)
+                agent = Agent(task=instructions, llm=llm, browser_profile=browser_config)
+            else:
+                agent = Agent(task=instructions, llm=llm)
+        else:
+            # Use executable path for known browsers
+            exe = get_browser_executable(browser)
+            if exe:
+                browser_config = BrowserProfile(executable_path=exe)
+                agent = Agent(task=instructions, llm=llm, browser_profile=browser_config)
+            else:
+                agent = Agent(task=instructions, llm=llm)
         result = await agent.run(max_steps=12)
         print("\n--- CLICK RESULT ---\n")
         if getattr(result, "final_result", None):
@@ -137,8 +259,21 @@ Describe what changed after scrolling.
 """
 
     try:
-        browser_config = BrowserConfig(browser_type=browser)
-        agent = Agent(task=instructions, llm=llm, browser_config=browser_config)
+        if browser == "system":
+            exe = detect_system_default_browser_executable()
+            if exe:
+                browser_config = BrowserProfile(executable_path=exe)
+                agent = Agent(task=instructions, llm=llm, browser_profile=browser_config)
+            else:
+                agent = Agent(task=instructions, llm=llm)
+        else:
+            # Use executable path for known browsers
+            exe = get_browser_executable(browser)
+            if exe:
+                browser_config = BrowserProfile(executable_path=exe)
+                agent = Agent(task=instructions, llm=llm, browser_profile=browser_config)
+            else:
+                agent = Agent(task=instructions, llm=llm)
         result = await agent.run(max_steps=12)
         print("\n--- SCROLL RESULT ---\n")
         if getattr(result, "final_result", None):
