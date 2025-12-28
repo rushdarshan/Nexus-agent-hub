@@ -17,11 +17,13 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 # Set API key if not already set
-if "GOOGLE_API_KEY" not in os.environ:
-    print("\n⚠️  GOOGLE_API_KEY environment variable not set")
-    print("   You can set it like this:")
-    print("   export GOOGLE_API_KEY='your-key-here'")
-    print("\n   Or paste your key now (or press Enter to skip):")
+from dotenv import load_dotenv
+load_dotenv()
+
+if "GOOGLE_API_KEY" not in os.environ and "BROWSER_USE_API_KEY" not in os.environ:
+    print("\n⚠️  No API key found in environment variables (GOOGLE_API_KEY or BROWSER_USE_API_KEY)")
+    print("   Please create a .env file or export the variable.")
+    print("\n   Enter your Gemini/Google API key to continue (or press Enter to exit):")
     api_key = input("   > ").strip()
     if api_key:
         os.environ["GOOGLE_API_KEY"] = api_key

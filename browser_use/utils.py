@@ -769,3 +769,111 @@ def sanitize_surrogates(text: str) -> str:
 		Text with surrogate characters removed
 	"""
 	return text.encode('utf-8', errors='ignore').decode('utf-8')
+
+
+# -------------------------------------------------------------------------
+# DYNAMIC BROWSER DETECTION (Refactored Fix)
+# -------------------------------------------------------------------------
+import platform
+import shutil
+import sys
+import os
+import subprocess
+try:
+    import winreg
+except ImportError:
+    winreg = None
+
+def get_chromium_executables() -> dict[str, str]:
+    """
+    Find available Chromium-based browser executables on the current system.
+    Returns a dictionary of browser_name -> executable_path.
+    """
+    system = platform.system().lower()
+    browsers = {}
+    
+    if system == 'windows':
+        # List of potential browsers to check in registry or common paths
+        candidates = {
+            'chrome': [
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
+                r"SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+            ],
+            'edge': [
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\msedge.exe",
+                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+            ],
+            'brave': [
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\brave.exe",
+                r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe"
+            ],
+            'comet': [
+                 # Check local app data for user-specific installs
+                 os.path.expandvars(r"%LOCALAPPDATA%\Perplexity\Comet\Application\comet.exe")
+            ],
+             'arc': [
+                 os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WindowsApps\Arc.exe")
+            ]
+        }
+        
+        for name, paths in candidates.items():
+            found = False
+            # Check Registry First (preferred for dynamic detection)
+            if winreg:
+                for path in paths:
+                    if path.startswith("SOFTWARE"):
+                        try:
+                            # Try both HKLM and HKCU
+                            for key_root in [winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER]:
+                                try:
+                                    with winreg.OpenKey(key_root, path) as key:
+                                        cmd, _ = winreg.QueryValueEx(key, None)
+                                        if cmd:
+                                            exe = cmd.strip('"')
+                                            if os.path.exists(exe):
+                                                browsers[name] = exe
+                                                found = True
+                                                break
+                                except WindowsError:
+                                    continue
+                        except Exception:
+                            pass
+                    if found: break
+
+            # Check File System if not found in registry
+            if not found:
+                for path in paths:
+                    if not path.startswith("SOFTWARE") and os.path.exists(path):
+                        browsers[name] = path
+                        break
+                        
+    elif system == 'darwin':  # macOS
+        # Standard app locations
+        candidates = {
+            'chrome': '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+            'edge': '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+            'brave': '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+            'arc': '/Applications/Arc.app/Contents/MacOS/Arc'
+        }
+        for name, path in candidates.items():
+            if os.path.exists(path):
+                browsers[name] = path
+                
+    elif system == 'linux':
+        # Use shutil.which to find on PATH
+        candidates = {
+            'chrome': ['google-chrome', 'google-chrome-stable', 'chrome'],
+            'edge': ['microsoft-edge', 'microsoft-edge-stable'],
+            'brave': ['brave-browser', 'brave'],
+            'chromium': ['chromium', 'chromium-browser']
+        }
+        for name, cmds in candidates.items():
+            for cmd in cmds:
+                path = shutil.which(cmd)
+                if path:
+                    browsers[name] = path
+                    break
+                    
+    return browsers

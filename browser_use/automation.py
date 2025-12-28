@@ -24,46 +24,54 @@ except Exception:
     winreg = None
 
 
-# Browser executable paths for Windows (Chromium-based browsers only)
-# Note: browser-use uses CDP (Chrome DevTools Protocol), so only Chromium-based browsers work
-BROWSER_EXECUTABLES = {
-    "comet": r"C:\Users\rushd\AppData\Local\Perplexity\Comet\Application\comet.exe",
-    "edge": r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-    "chrome": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-    "brave": r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
-}
+from browser_use.utils import get_chromium_executables
 
+# Global cache of found browsers
+_FOUND_BROWSERS = get_chromium_executables()
 
 def get_browser_executable(browser: str) -> str | None:
     """Get the executable path for a browser name."""
-    return BROWSER_EXECUTABLES.get(browser.lower())
+    return _FOUND_BROWSERS.get(browser.lower())
 
 
 def get_browser_choice():
-    """Prompt user to select which browser to use.
-    
-    Note: Only Chromium-based browsers are supported (CDP required).
-    Firefox/LibreWolf are NOT supported by browser-use framework.
-    """
+    """Prompt user to select which browser to use."""
     print("\n=== SELECT BROWSER ===")
     print("(Only Chromium-based browsers supported)")
-    print("1) Comet (default)")
-    print("2) Edge")
-    print("3) Chrome")
-    print("4) Brave")
-    print("5) Other (use system default)")
+    
+    if not _FOUND_BROWSERS:
+        print("❌ No Chromium browsers detected! Please install Chrome, Edge, or Brave.")
+        return None
 
-    choice = input("\nSelect browser (1-5, default 1): ").strip()
+    # Sort so keys are deterministic (1, 2, 3...)
+    available_names = sorted(_FOUND_BROWSERS.keys())
+    
+    for i, name in enumerate(available_names):
+        print(f"{i+1}) {name.title()} ({_FOUND_BROWSERS[name]})")
+    
+    print(f"{len(available_names)+1}) Enter custom path")
 
-    browser_map = {
-        "1": "comet",
-        "2": "edge",
-        "3": "chrome",
-        "4": "brave",
-        "5": "system",
-    }
+    choice = input(f"\nSelect browser (1-{len(available_names)+1}, default 1): ").strip()
 
-    return browser_map.get(choice, "comet")
+    if not choice:
+        return available_names[0]
+        
+    try:
+        idx = int(choice)
+        if 1 <= idx <= len(available_names):
+            return available_names[idx-1]
+        elif idx == len(available_names) + 1:
+             path = input("Enter full path to executable: ").strip()
+             if os.path.exists(path):
+                 _FOUND_BROWSERS["custom"] = path
+                 return "custom"
+             else:
+                 print("Invalid path.")
+                 return available_names[0]
+    except ValueError:
+        pass
+
+    return available_names[0]
 
 
 def detect_system_default_browser_executable() -> str | None:
