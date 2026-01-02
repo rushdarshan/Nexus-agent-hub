@@ -1,10 +1,17 @@
 
+import sys
+from pathlib import Path
+
+# Add current dir to path for absolute imports
+sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import logging
-from .manager import manager
-from .memory import memory
+from manager import manager
+from memory import memory
 
 app = FastAPI()
 

@@ -1,0 +1,10 @@
+# Android Automation Requirements
+uiautomator2>=2.16.22
+fastapi>=0.109.2
+uvicorn>=0.27.1
+pydantic>=2.6.1
+openai>=1.12.0
+python-dotenv>=1.0.1
+agent-fuse>=0.1.5
+Pillow>=10.2.0
+xmltodict>=0.13.0

@@ -23,6 +23,7 @@ dist/
 # Data files
 *.gif
 *.txt
+!requirements_android.txt
 *.pdf
 *.csv
 *.json
@@ -58,6 +59,9 @@ token.json
 temp-profile-*
 
 screenshot.png
+android_output/
+android_screenshot*.png
+*.db
 
 # *.md
 

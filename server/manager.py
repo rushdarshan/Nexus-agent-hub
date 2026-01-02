@@ -2,15 +2,16 @@
 import asyncio
 import base64
 import logging
+import sys
+from pathlib import Path
 from typing import Optional, List, Callable, Awaitable
+
+# Add parent dir to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from browser_use import Agent, Browser, BrowserProfile
-from examples.fractal_swarm.swarm_manager import (
-    run_simulated_swarm,
-    run_real_swarm,
-    flight_agent_sim,
-    hotel_agent_sim,
-    itinerary_agent_sim,
-)
+from swarm_coordinator import SwarmCoordinator
+from swarm_brain import get_brain
 
 
 logger = logging.getLogger(__name__)
@@ -86,58 +87,105 @@ class AgentManager:
         await self.broadcast(update_data)
 
     async def start_task(self, task: str):
-        """Initialize and run a new agent task"""
+        """Initialize and run a new agent task via subprocess with output streaming"""
         if self.agent:
             await self.stop()
 
-        # Initialize browser if needed
-        # We stick to one browser instance for now for speed
-        if not self.browser:
-            self.browser = Browser(browser_profile=BrowserProfile(headless=False))  # Visible for "God Mode" (telepresence)
+        try:
+            import subprocess
+            import threading
+            
+            # Get path to cli_agent.py
+            cli_agent_path = Path(__file__).parent.parent / "cli_agent.py"
+            
+            # Spawn the agent as a separate process with piped output
+            self.background_process = subprocess.Popen(
+                ["python", "-u", str(cli_agent_path), task],  # -u for unbuffered output
+                cwd=str(Path(__file__).parent.parent),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding='utf-8',
+                bufsize=1,  # Line buffered
+            )
+            
+            logger.info(f"🚀 Spawned agent process PID: {self.background_process.pid}")
+            await self.broadcast({"type": "status", "status": "started", "task": task})
+            
+            # Capture the current loop
+            loop = asyncio.get_running_loop()
+            
+            # Start a background thread to read and broadcast output
+            def stream_output():
+                try:
+                    for line in iter(self.background_process.stdout.readline, ''):
+                        if line:
+                            # Use asyncio to broadcast from thread to main loop
+                            asyncio.run_coroutine_threadsafe(
+                                self.broadcast({
+                                    "type": "terminal_output",
+                                    "line": line.rstrip()
+                                }),
+                                loop
+                            )
+                    
+                    # Process finished
+                    exit_code = self.background_process.wait()
+                    asyncio.run_coroutine_threadsafe(
+                        self.broadcast({
+                            "type": "status",
+                            "status": "completed" if exit_code == 0 else "failed"
+                        }),
+                        loop
+                    )
+                except Exception as e:
+                    logger.error(f"Stream error: {e}")
+            
+            # Start streaming thread
+            self.stream_thread = threading.Thread(target=stream_output, daemon=True)
+            self.stream_thread.start()
+            
+        except Exception as e:
+            logger.error(f"Failed to start agent: {e}")
+            await self.broadcast({"type": "error", "error": str(e)})
+            raise
 
-        # Create agent
-        self.agent = Agent(
-            task=task,
-            browser=self.browser,
-            use_vision=True,  # Critical for "God Mode"
-        )
 
-        # Run in background
-        self.background_task = asyncio.create_task(self._run_agent())
-
-        await self.broadcast({"type": "status", "status": "started", "task": task})
-
-    async def start_swarm(self, task: str, mode: str = "simulate", openrouter_key: str | None = None):
-        """Start a Fractal Swarm for the given task.
-
-        mode: 'simulate' or 'real'
-        """
+    async def start_swarm(self, task: str, mode: str = "real", openrouter_key: str | None = None):
+        """Start a Fractal Swarm for the given task using SwarmCoordinator."""
         # Stop any existing agent or swarm
         await self.stop()
 
         async def _run_swarm():
             await self.broadcast({"type": "status", "status": "swarm_started", "task": task, "mode": mode})
             try:
-                if mode == "real":
-                    result = await run_real_swarm(task, openrouter_key)
-                    await self.broadcast({"type": "swarm_result", "result": result})
-                else:
-                    # Simulate stepwise agent progress so dashboard receives incremental updates
-                    agents = [flight_agent_sim(task), hotel_agent_sim(task), itinerary_agent_sim(task)]
-                    pending = [asyncio.create_task(a) for a in agents]
-                    results = {}
-                    for fut in asyncio.as_completed(pending):
-                        try:
-                            r = await fut
-                            results[r["agent"]] = r["result"]
-                            # Broadcast incremental update
-                            await self.broadcast({"type": "swarm_step", "agent": r["agent"], "result": r["result"]})
-                        except Exception as e:
-                            logger.error(f"Swarm sub-agent error: {e}")
-                            await self.broadcast({"type": "error", "error": str(e)})
-
-                    summary = {"task": task, "results": results}
-                    await self.broadcast({"type": "swarm_result", "result": summary})
+                # Use our SwarmCoordinator
+                coordinator = SwarmCoordinator(goal=task, headless=False)
+                
+                # Custom broadcast wrapper to send updates to dashboard
+                original_store = coordinator.brain.store_finding
+                
+                async def store_and_broadcast(session_id, finding):
+                    original_store(session_id, finding)
+                    await self.broadcast({
+                        "type": "swarm_step",
+                        "agent": finding.agent_name,
+                        "result": finding.finding[:500]  # Truncate for display
+                    })
+                
+                coordinator.brain.store_finding = store_and_broadcast
+                
+                # Run the full swarm workflow
+                decision = await coordinator.run()
+                
+                # Broadcast final result
+                result = {
+                    "task": task,
+                    "recommendation": decision.recommendation,
+                    "sources": decision.sources
+                }
+                await self.broadcast({"type": "swarm_result", "result": result})
+                
             except Exception as e:
                 logger.error(f"Swarm failed: {e}")
                 await self.broadcast({"type": "error", "error": str(e)})
@@ -146,13 +194,16 @@ class AgentManager:
 
     async def _run_agent(self):
         try:
-            # Using the hook
-            await self.agent.run(on_step_end=self._on_step_end)
-
+            logger.info("🚀 Starting agent execution...")
+            
+            # Run the agent (max_steps limits the execution)
+            result = await self.agent.run(max_steps=15)
+            
+            logger.info(f"✅ Agent completed: {result}")
             await self.broadcast({"type": "status", "status": "completed"})
 
         except Exception as e:
-            logger.error(f"Agent failed: {e}")
+            logger.error(f"❌ Agent failed: {e}", exc_info=True)
             await self.broadcast({"type": "error", "error": str(e)})
         finally:
             self.background_task = None

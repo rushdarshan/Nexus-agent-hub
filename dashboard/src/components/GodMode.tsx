@@ -23,11 +23,13 @@ interface MemoryStats {
 export const GodMode: React.FC = () => {
     const [state, setState] = useState<AgentState>({ status: 'idle' });
     const [logs, setLogs] = useState<string[]>([]);
+    const [terminalOutput, setTerminalOutput] = useState<string[]>([]);
     const [inputTask, setInputTask] = useState('');
     const [swarmResults, setSwarmResults] = useState<SwarmResult[]>([]);
     const [memoryStats, setMemoryStats] = useState<MemoryStats>({ total_memories: 0, total_accumulated_experience: 0 });
     const wsRef = useRef<WebSocket | null>(null);
     const logContainerRef = useRef<HTMLDivElement>(null);
+    const terminalRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         // Connect to WebSocket
@@ -57,11 +59,27 @@ export const GodMode: React.FC = () => {
         };
     }, []);
 
+    // Smart auto-scroll for logs
     useEffect(() => {
-        if (logContainerRef.current) {
-            logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+        if (!logContainerRef.current) return;
+        const { scrollTop, scrollHeight, clientHeight } = logContainerRef.current;
+        const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+
+        if (isNearBottom) {
+            logContainerRef.current.scrollTop = scrollHeight;
         }
     }, [logs]);
+
+    // Smart auto-scroll for terminal
+    useEffect(() => {
+        if (!terminalRef.current) return;
+        const { scrollTop, scrollHeight, clientHeight } = terminalRef.current;
+        const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+
+        if (isNearBottom) {
+            terminalRef.current.scrollTop = scrollHeight;
+        }
+    }, [terminalOutput]);
 
     const fetchMemoryStats = async () => {
         try {
@@ -89,8 +107,14 @@ export const GodMode: React.FC = () => {
             if (data.status === 'swarm_started') {
                 setSwarmResults([]); // Clear previous results
             }
+            if (data.status === 'started') {
+                setTerminalOutput([]); // Clear terminal on start
+            }
         } else if (data.type === 'error') {
             addLog(`Error: ${data.error}`);
+            setTerminalOutput(prev => [...prev, `❌ Error: ${data.error}`]);
+        } else if (data.type === 'terminal_output') {
+            setTerminalOutput(prev => [...prev, data.line]);
         } else if (data.type === 'swarm_step') {
             // Incremental update from a sub-agent
             addLog(`Swarm [${data.agent}]: Task completed.`);
@@ -108,6 +132,11 @@ export const GodMode: React.FC = () => {
 
     const addLog = (msg: string) => {
         setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
+    };
+
+    const clearLogs = () => {
+        setLogs([]);
+        setTerminalOutput([]);
     };
 
     const sendCommand = async (endpoint: string, body?: any) => {
@@ -168,7 +197,15 @@ export const GodMode: React.FC = () => {
                                         alt="Live Browser Feed"
                                     />
                                 ) : (
-                                    <div className="placeholder">AWAITING VISUAL FEED...</div>
+                                    <div className="terminal-feed" ref={terminalRef}>
+                                        {terminalOutput.length > 0 ? (
+                                            terminalOutput.map((line, i) => (
+                                                <div key={i} className="term-line">{line}</div>
+                                            ))
+                                        ) : (
+                                            <div className="placeholder">AWAITING VISUAL FEED...</div>
+                                        )}
+                                    </div>
                                 )}
                             </>
                         )}
@@ -214,6 +251,13 @@ export const GodMode: React.FC = () => {
                             onClick={() => sendCommand('agent/stop')}
                         >
                             TERMINATE
+                        </button>
+                        <button
+                            className="btn-clear"
+                            onClick={clearLogs}
+                            style={{ background: '#444', color: '#fff' }}
+                        >
+                            CLEAR
                         </button>
                     </div>
                 </div>
