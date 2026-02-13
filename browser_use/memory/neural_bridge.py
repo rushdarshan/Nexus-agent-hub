@@ -22,7 +22,25 @@ class NeuralBridge:
     def __init__(self, db_path: str = DB_PATH):
         self.db_path = Path(db_path)
         self.model = None
+        self._init_db()
         self._init_model()
+        
+    def _init_db(self):
+        """Initialize the database schema"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS vectors (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        content_hash TEXT UNIQUE,
+                        embedding BLOB,
+                        metadata TEXT,
+                        created_at TEXT
+                    )
+                """)
+                conn.commit()
+        except Exception as e:
+            logger.error(f"❌ Neural Bridge DB Init Error: {e}")
         
     def _init_model(self):
         """Initialize the embedding model (lazy load)"""
