@@ -25,44 +25,23 @@ from browser_use.llm import ChatGoogle
 
 
 async def run_task(task: str):
-    """Run a single browser agent task."""
-    print(f"\n🚀 Starting agent with task: {task}\n")
+    """Run a single browser agent task via Intelligent Router."""
+    print(f"\n🚀 Starting Nexus Router with task: {task}\n")
     
     llm = ChatGoogle(model="gemini-2.0-flash", temperature=0.3)
     
-    browser_session = BrowserSession(
-        browser_profile=BrowserProfile(
-            headless=False,
-            disable_security=True,
-            user_data_dir=r"C:\Users\rushd\AppData\Local\Google\Chrome\User Data",
-            profile_directory='Default',
-            channel='chrome'
-        )
-    )
+    from intelligent_router import NexusRouter
+    router = NexusRouter(llm=llm)
     
     try:
-        agent = Agent(
-            task=task,
-            llm=llm,
-            browser_session=browser_session
-        )
-        
-        result = await agent.run(max_steps=20)
-        
-        print(f"\n✅ Task completed!")
-        if hasattr(result, 'final_result'):
-            print(f"Result: {result.final_result()}")
-        
-        return result
+        # The router handles the execution and printing
+        await router.execute(task)
+        print(f"\n✅ Task completed via Nexus Router!")
+        return "Success"
         
     except Exception as e:
-        print(f"\n❌ Agent failed: {e}")
+        print(f"\n❌ Nexus Router failed: {e}")
         raise
-    finally:
-        try:
-            await browser_session.close()
-        except:
-            pass
 
 
 if __name__ == "__main__":

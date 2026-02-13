@@ -12,6 +12,7 @@ from pydantic import BaseModel
 import logging
 from manager import manager
 from memory import memory
+from browser_use.memory.neural_bridge import neural_bridge
 
 app = FastAPI()
 
@@ -73,6 +74,27 @@ async def resume_agent():
 @app.get("/memory/stats")
 async def get_memory_stats():
     return memory.get_stats()
+
+
+class MemoryQuery(BaseModel):
+    query: str
+    limit: int = 5
+    min_score: float = 0.0
+
+class MemoryItem(BaseModel):
+    content: str
+    metadata: dict = {}
+
+@app.post("/memory/query")
+async def query_memory(request: MemoryQuery):
+    """Semantic search via Neural Bridge"""
+    return neural_bridge.query_similar(request.query, request.limit, request.min_score)
+
+@app.post("/memory/add")
+async def add_memory(request: MemoryItem):
+    """Add semantic memory"""
+    neural_bridge.store_memory(request.content, request.metadata)
+    return {"status": "stored"}
 
 
 @app.websocket("/ws")

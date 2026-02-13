@@ -7,7 +7,7 @@ from typing import List, Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = "brain.db"
+DB_PATH = "nexus_memory.db"
 
 
 class NeuralMemory:

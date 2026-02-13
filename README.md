@@ -143,6 +143,21 @@ uvx browser-use init --template default --output my_agent.py
 
 <br/>
 
+
+# 💎 VibeCrystal (The Agent Compiler)
+
+Scale your agents from "fuzzy" to "hardened" with VibeCrystal.
+
+1. **Run** your agent with `browser-use`.
+2. **Crystallize** the successful run into a pure Playwright script.
+3. **Deploy** deterministic, lightning-fast automation.
+
+```bash
+python vibe_crystal.py execution_history.json
+```
+
+<br/>
+
 # Demos
 
 

@@ -195,6 +195,16 @@ export const GodMode: React.FC = () => {
                                     <img
                                         src={`data:image/png;base64,${state.screenshot}`}
                                         alt="Live Browser Feed"
+                                        style={{ cursor: 'crosshair' }}
+                                        onClick={(e) => {
+                                            const img = e.currentTarget;
+                                            const rect = img.getBoundingClientRect();
+                                            const x = (e.clientX - rect.left) / rect.width;
+                                            const y = (e.clientY - rect.top) / rect.height;
+                                            // Send normalized coordinates
+                                            sendCommand('agent/click', { x, y });
+                                            addLog(`System: Human intervention at ${x.toFixed(2)}, ${y.toFixed(2)}`);
+                                        }}
                                     />
                                 ) : (
                                     <div className="terminal-feed" ref={terminalRef}>
@@ -227,6 +237,14 @@ export const GodMode: React.FC = () => {
                             onClick={() => sendCommand('agent/start', { task: inputTask || "Go to google.com" })}
                         >
                             SINGLE AGENT
+                        </button>
+                        <button
+                            className="btn-update"
+                            onClick={() => sendCommand('agent/update_goal', { goal: inputTask })}
+                            disabled={state.status !== 'running'}
+                            style={{ background: '#d97706' }}
+                        >
+                            UPDATE GOAL
                         </button>
                         <button
                             className="btn-swarm"

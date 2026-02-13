@@ -45,16 +45,20 @@ class SwarmCoordinator:
     3. CEO reads Brain → Synthesizes final answer
     """
     
-    def __init__(self, goal: str, headless: bool = False):
+    
+    def __init__(self, goal: str, headless: bool = False, max_concurrent_browsers: int = 2):
         self.goal = goal
         self.headless = headless
         self.brain = get_brain()
         self.session_id = self.brain.create_session(goal)
         self.llm = ChatGoogle(model="gemini-2.0-flash", temperature=0.3)
+        self.semaphore = asyncio.Semaphore(max_concurrent_browsers)
         
         print(f"🧠 SwarmCoordinator initialized")
         print(f"   Session: {self.session_id}")
         print(f"   Goal: {goal}")
+        print(f"   Concurrency Limit: {max_concurrent_browsers} browsers")
+
     
     async def plan_tasks(self) -> List[WorkerTask]:
         """Have the CEO agent plan what tasks to delegate."""
@@ -104,81 +108,83 @@ Now plan tasks for: {self.goal}
     async def run_worker(self, task: WorkerTask) -> Optional[Finding]:
         """Run a single worker agent and store its finding."""
         
-        print(f"\n🤖 [{task.name}] Starting on {task.search_site}...")
+        async with self.semaphore:
+            print(f"\n🤖 [{task.name}] Starting on {task.search_site}...")
         
-        browser_session = BrowserSession(
-            browser_profile=BrowserProfile(
-                headless=self.headless,
-                disable_security=True
-            )
-        )
-        
-        worker_prompt = f"""
-You are {task.name}, a research agent.
-
-YOUR TASK: {task.objective}
-WEBSITE: Go to {task.search_site}
-
-IMPORTANT INSTRUCTIONS:
-1. Navigate to the website
-2. Search/find the information requested
-3. Extract SPECIFIC data (prices, times, details)
-4. Return a structured finding with exact numbers
-
-Be precise. Return actual data, not vague summaries.
-End with: FINDING: [your specific finding with numbers/details]
-"""
-        
-        try:
-            agent = Agent(
-                task=worker_prompt,
-                llm=self.llm,
-                browser_session=browser_session
+            browser_session = BrowserSession(
+                browser_profile=BrowserProfile(
+                    headless=self.headless,
+                    disable_security=True,
+                    channel='chrome'
+                )
             )
             
-            result = await agent.run(max_steps=12)
+            worker_prompt = f"""
+    You are {task.name}, a research agent.
+    
+    YOUR TASK: {task.objective}
+    WEBSITE: Go to {task.search_site}
+    
+    IMPORTANT INSTRUCTIONS:
+    1. Navigate to the website
+    2. Search/find the information requested
+    3. Extract SPECIFIC data (prices, times, details)
+    4. Return a structured finding with exact numbers
+    
+    Be precise. Return actual data, not vague summaries.
+    End with: FINDING: [your specific finding with numbers/details]
+    """
             
-            # Extract the finding
-            result_text = str(result.final_result()) if hasattr(result, 'final_result') else str(result)
-            
-            # Get current URL from browser
-            current_url = task.search_site  # Simplified; could extract from browser state
-            
-            finding = Finding(
-                agent_name=task.name,
-                task=task.objective,
-                finding=result_text,
-                source_url=current_url,
-                confidence=0.8,  # Could be smarter about this
-                timestamp=datetime.now().isoformat()
-            )
-            
-            # Store in brain
-            self.brain.store_finding(self.session_id, finding)
-            
-            print(f"✅ [{task.name}] Completed: {result_text[:100]}...")
-            return finding
-            
-        except Exception as e:
-            print(f"❌ [{task.name}] Failed: {e}")
-            
-            # Store failure as finding
-            finding = Finding(
-                agent_name=task.name,
-                task=task.objective,
-                finding=f"FAILED: {str(e)}",
-                source_url=task.search_site,
-                confidence=0.0,
-                timestamp=datetime.now().isoformat()
-            )
-            self.brain.store_finding(self.session_id, finding)
-            return finding
-            
-        finally:
             try:
-                await browser_session.close()
-            except:
-                pass
+                agent = Agent(
+                    task=worker_prompt,
+                    llm=self.llm,
+                    browser_session=browser_session
+                )
+                
+                result = await agent.run(max_steps=12)
+                
+                # Extract the finding
+                result_text = str(result.final_result()) if hasattr(result, 'final_result') else str(result)
+                
+                # Get current URL from browser
+                current_url = task.search_site  # Simplified; could extract from browser state
+                
+                finding = Finding(
+                    agent_name=task.name,
+                    task=task.objective,
+                    finding=result_text,
+                    source_url=current_url,
+                    confidence=0.8,  # Could be smarter about this
+                    timestamp=datetime.now().isoformat()
+                )
+                
+                # Store in brain
+                self.brain.store_finding(self.session_id, finding)
+                
+                print(f"✅ [{task.name}] Completed: {result_text[:100]}...")
+                return finding
+                
+            except Exception as e:
+                print(f"❌ [{task.name}] Failed: {e}")
+                
+                # Store failure as finding
+                finding = Finding(
+                    agent_name=task.name,
+                    task=task.objective,
+                    finding=f"FAILED: {str(e)}",
+                    source_url=task.search_site,
+                    confidence=0.0,
+                    timestamp=datetime.now().isoformat()
+                )
+                self.brain.store_finding(self.session_id, finding)
+                return finding
+                
+            finally:
+                try:
+                    await browser_session.close()
+                except:
+                    pass
     
     async def run_ceo_synthesis(self) -> Decision:
         """Have the CEO agent synthesize all findings into a decision."""

@@ -1432,6 +1432,13 @@ class Agent(Generic[Context, AgentStructuredOutput]):
 
 		self.history.add_item(history_item)
 
+		# Cap history size if configured to prevent memory leaks
+		if self.settings.max_history_items and len(self.history.history) > self.settings.max_history_items:
+			# Remove oldest items, keeping the most recent max_history_items
+			excess = len(self.history.history) - self.settings.max_history_items
+			self.history.history = self.history.history[excess:]
+			self.logger.debug(f'🧹 Pruned {excess} history items to stay within limit of {self.settings.max_history_items}')
+
 	def _remove_think_tags(self, text: str) -> str:
 		THINK_TAGS = re.compile(r'<think>.*?</think>', re.DOTALL)
 		STRAY_CLOSE_TAG = re.compile(r'.*?</think>', re.DOTALL)

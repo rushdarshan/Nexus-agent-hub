@@ -51,7 +51,7 @@ class SwarmBrain:
     - Learn from past decisions
     """
     
-    def __init__(self, db_path: str = "swarm_brain.db"):
+    def __init__(self, db_path: str = "nexus_memory.db"):
         self.db_path = Path(db_path)
         self.lock = threading.Lock()
         self._init_database()
@@ -99,6 +99,17 @@ class SwarmBrain:
                     status TEXT,
                     created_at TEXT,
                     completed_at TEXT
+                )
+            """)
+            
+            # Vectors table for semantic search (Neural Bridge)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS vectors (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content_hash TEXT UNIQUE,
+                    embedding BLOB,
+                    metadata TEXT,
+                    created_at TEXT
                 )
             """)
             

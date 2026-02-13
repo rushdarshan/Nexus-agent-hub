@@ -1,8 +1,9 @@
-
 import asyncio
 import base64
 import logging
 import sys
+import os
+import atexit
 from pathlib import Path
 from typing import Optional, List, Callable, Awaitable
 
@@ -24,6 +25,20 @@ class AgentManager:
         self.browser_context = None
         self.listeners: List[Callable[[dict], Awaitable[None]]] = []
         self.background_task: Optional[asyncio.Task] = None
+        self.background_process = None
+        
+        # Ensure subprocess is killed on exit
+        atexit.register(self._cleanup_process)
+
+    def _cleanup_process(self):
+        """Kill background process on shutdown"""
+        if self.background_process and self.background_process.poll() is None:
+            logger.info(f"🛑 Killing zombie process {self.background_process.pid}")
+            self.background_process.terminate()
+            try:
+                self.background_process.wait(timeout=2)
+            except:
+                self.background_process.kill()
 
     async def broadcast(self, data: dict):
         """Send data to all connected websocket listeners"""
@@ -98,12 +113,17 @@ class AgentManager:
             # Get path to cli_agent.py
             cli_agent_path = Path(__file__).parent.parent / "cli_agent.py"
             
+            # Prepare environment with enforced UTF-8 encoding
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "utf-8"
+
             # Spawn the agent as a separate process with piped output
             self.background_process = subprocess.Popen(
-                ["python", "-u", str(cli_agent_path), task],  # -u for unbuffered output
+                [sys.executable, "-u", str(cli_agent_path), task],  # -u for unbuffered output
                 cwd=str(Path(__file__).parent.parent),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
+                env=env,
                 text=True,
                 encoding='utf-8',
                 bufsize=1,  # Line buffered
